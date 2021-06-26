@@ -2,7 +2,6 @@
 ################################################################################
 ## Message Scraper for discord archival                                       ##
 ################################################################################
-# Copyright (c) 2020                                                          ##
 #                                                                             ##
 # Permission is hereby granted, free of charge, to any person obtaining a copy##
 # of this software and associated documentation files (the "Software"),to deal##
@@ -370,7 +369,7 @@ directory_listing = scanfilesbyextension(imagedirectory,arguments.imagesaveforma
 @bot.event
 async def scrapemessages(message,channel,limit):
     #get the input
-    asdf = ChannelScraper(channel="",server= "")
+    channelscraper = ChannelScraper(channel="",server= "")
     #itterate over messages in channel until limit is reached
     for msg in message.channel.history(limit):
         #ain't us
@@ -406,7 +405,7 @@ async def scrapemessages(message,channel,limit):
                         imageblob = imagesaver.imagedata()
                     else:
                         raise Exception
-                        
+
             data = data.append({'sender'       : msg.author.name,
                                 'time'         : msg.created_at,
                                 'content'      : msg.content,
@@ -418,18 +417,18 @@ async def scrapemessages(message,channel,limit):
             if SAVETOCSV == True:
                 #file_location = arguments.dbname + str(today) # Set the string to where you want the file to be saved to
                 data.to_csv(file_location)
-            #ig they want to push it to a local sqlite3 database
+            #i they want to push it to a local sqlite3 database
             elif SAVETOCSV == False:
-                messagesent = DiscordMessage(channel = dataframe['channel'],
-                                            time = dataframe['time'],
-                                            sender = dataframe['sender'],
-                                            content = dataframe['content'],
+                messagesent = DiscordMessage(channel = data['channel'],
+                                            time = data['time'],
+                                            sender = data['sender'],
+                                            content = data['content'],
                                             # either a file path or base64 
-                                            file = dataframe['file'])
+                                            file = data['file'])
                 #push to DB
                 addmsgtodb(messagesent)
-                asdf.channelscrapetodb(data)
-        #stop at limit
+                channelscraper.channelscrapetodb(data)
+        #stop at message limit
         if len(data) == limit:
             break
 
@@ -526,6 +525,15 @@ class HTTPDownloadRequest():
         self.responsedatacontainer = []
         # just a different way of setting a default
         # good for long strings as defaults
+    #Note: Custom headers are given less precedence than more specific sources 
+    # of information. For instance:
+    # Authorization headers set with headers= will be overridden if credentials 
+    #    are specified in .netrc, which in turn will be overridden by the auth= parameter. 
+    #    Requests will search for the netrc file at ~/.netrc, ~/_netrc, or at the path 
+    #    specified by the NETRC environment variable.
+    # Authorization headers will be removed if you get redirected off-host.
+    # Proxy-Authorization headers will be overridden by proxy credentials provided in the URL.
+    # Content-Length headers will be overridden when we can determine the length of the content.
         try:
             if len(httpauthstring) > 0:
                 self.headerauthstring = "'Authorization':" + httpauthstring
@@ -541,9 +549,12 @@ class HTTPDownloadRequest():
                               Electron/9.3.5 Safari/537.36", 
                     'Authorization' : self.httpauthstring}
             # perform the http request
-            responsedata = self.sendRequest(url)
-            if responsedata == None:
+            self.sendRequest(url)
+            #check to see if there is data
+            if self.response == None:
                 raise Exception
+            #filter the response for the required image data
+            imagedata = self.filterresponse(self.response)
         except Exception:
             errormessage("[-] Error in HTTPDownloadRequest()")
 
@@ -551,7 +562,7 @@ class HTTPDownloadRequest():
         self.headers = headers
 
     def was_there_was_an_error(self, responsecode):
-        '''
+        ''' Basic prechecking before more advanced filtering of output
 Returns False if no error
         '''
         # server side error]
@@ -576,33 +587,28 @@ Returns False if no error
             return False
 
     def sendRequest(self, url):
-        #urlparts = urlstr.split('/')
-        #urlpath = '/{0}'.format('/'.join(urlparts[3:]))
-        #connection = HTTPSConnection(urlparts[2], 443)
-        self.response = requests.get(urlpath, headers=self.headers)
-        response = 
+        self.response = requests.get(url, headers=self.headers)
         if TESTING == True:
-            for header in response.getheaders():
+            for header in self.response.headers:
                 if header[0] == 'Retry-After':
                     debugmessage(header)
 
+    def filterresponse(self,response):
         #filter out errors with our own stuff first
         if self.was_there_was_an_error(response.status) == False:
             # Return the response if the connection was successful.
-            if 199 < response.status < 300:
+            if 199 < response.status_code < 300:
                 return response
-        
             #run this function again if we hit a redirect page.
-            elif 299 < response.status < 400:
+            elif 299 < response.status_code < 400:
                 # Grab the URL that we're redirecting to.
-                url = response.getheader('Location')
-                domain = url.split('/')[2].split(':')[0]
+                redirecturl = response.header('Location')
+                newdomain = redirecturl.split('/')[2].split(':')[0]
                 # If the domain is a part of Discord then re-run this function.
-                if domain in ['discordapp.com', 'discord.com']:
-                    self.sendRequest(url)
-            
+                if newdomain in domainlist:
+                    self.sendRequest(redirecturl)
                 # Throw a warning message to acknowledge an untrusted redirect.
-                warn('Ignored unsafe redirect to {0}.'.format(url))
+                warn('[+] Ignored unsafe redirect to {0}.'.format(redirecturl))
             # Otherwise throw a warning message to acknowledge a failed connection.
             else: 
                 warn('HTTP {0} from {1}.'.format(response.status, url))
