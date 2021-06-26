@@ -2,7 +2,7 @@
 ################################################################################
 ## Message Scraper for discord archival                                       ##
 ################################################################################
-# Copyright (c) 2020 Adam Galindo                                             ##
+# Copyright (c) 2020                                     ##
 #                                                                             ##
 # Permission is hereby granted, free of charge, to any person obtaining a copy##
 # of this software and associated documentation files (the "Software"),to deal##
@@ -56,6 +56,7 @@ from datetime import date
 from os import _exit as exit
 from json import loads, dump
 from mimetypes import MimeTypes
+from requests import requote_uri
 from signal import SIGINT, signal
 from importlib import import_module
 from sys import stderr, version_info
@@ -141,6 +142,8 @@ bot = commands.Bot(command_prefix=(COMMAND_PREFIX))
 ###############################################################################
 #   LOGGING
 ###############################################################################
+domainlist = ['discordapp.com', 'discord.com', "discordapp.net"]
+attachmentsurl = "/attachments/"
 client = discord.Client()
 guild = discord.Guild
 SAVETOCSV = arguments.saveformat
@@ -377,40 +380,54 @@ async def scrapemessages(message,channel,limit):
             messageattachments = message.attachments
             ## shove into pandas DF
             data = pandas.DataFrame(columns=['sender', 'time', 'content','file'])
-            #if attachments
+            #if attachment exists in message
             if len(messageattachments) > 0:
                 #process attachments to grab images
                 for attachment in messageattachments:
-                    #its a link to 
-                    if attachment.url != None:
+                    #its a link to something and that link is an image in discords CDN
+                    # TODO: add second filter calling a class that checks for discord CDN
+                    if (attachment.url != None) and (attachment.filename.endswith(".jpg" or ".png" or ".gif")):
                         # standard headers
                         imagedata = HTTPDownloadRequest("",discord_bot_token,attachment.url)
-                            #save base64 directly in the database
-                        imagesaver = SaveDiscordImage(imagebytes = imagedata,
-                                                          base64orfile = arguments.saveformat,
-                                                          filename = attachment.name,
-                                                          imagesaveformat = arguments.imagesaveformat
-                                                          )
+                        imagesaver = SaveDiscordImage(imagebytes      = imagedata,
+                                                      base64orfile    = arguments.saveformat,
+                                                      filename        = attachment.name,
+                                                      imagesaveformat = arguments.imagesaveformat
+                                                    )
+                        #base64 specific stuff
                         #if arguments.saveformat == "base64":
-                        #elif arguments.saveformat == "file":
+                        
+                        # if they want to save an image as a file and link to it in the database
+                        if arguments.saveformat == "file":
+                            # add the time and sender/messageID to name
+                            # just in case of data loss
+                            file_location = arguments.dbname + "_" + str(datetime.now()) + "_" + msg.author
                         # we now have either base64 image data, or binary image data
                         imageblob = imagesaver.imagedata()
-
-                    if attachment.filename.endswith(".jpg" or ".png" or ".gif"):
-                        imagesaver = SaveDiscordImage(attachment,arguments.saveformat)
-                        pass
                     else:
-                        break
+                        raise Exception
+                        
             data = data.append({'sender'       : msg.author.name,
                                 'time'         : msg.created_at,
                                 'content'      : msg.content,
                                 'file'         : imagedata},
                                 ignore_index = True)
             #perform data output
+
+            #if they want a CSV file
             if SAVETOCSV == True:
-                file_location = arguments.dbname + str(today) # Set the string to where you want the file to be saved to
+                #file_location = arguments.dbname + str(today) # Set the string to where you want the file to be saved to
                 data.to_csv(file_location)
+            #ig they want to push it to a local sqlite3 database
             elif SAVETOCSV == False:
+                messagesent = DiscordMessage(channel = dataframe['channel'],
+                                            time = dataframe['time'],
+                                            sender = dataframe['sender'],
+                                            content = dataframe['content'],
+                                            # either a file path or base64 
+                                            file = dataframe['file'])
+                #push to DB
+                addmsgtodb(messagesent)
                 asdf.channelscrapetodb(data)
         #stop at limit
         if len(data) == limit:
@@ -465,10 +482,10 @@ class SaveDiscordImage():
 
 class APIRequest():
     '''uses Requests to return specific routes from a base API url'''
-        def __init__(self, apibaseurl:str, thing:str):
-            self.request_url = requote_uri("".format(apibaseurl,self.thing))
-            blueprint("[+] Requesting: " + makered(self.request_url) + "\n")
-            self.request_return = requests.get(self.request_url)
+    def __init__(self, apibaseurl:str, thing:str):
+        self.request_url = requote_uri("".format(apibaseurl,self.thing))
+        blueprint("[+] Requesting: " + makered(self.request_url) + "\n")
+        self.request_return = requests.get(self.request_url)
 
 
 ###############################################################################
@@ -482,24 +499,21 @@ class ChannelScraper():
         self.filterstring = ""
 
     def channelscrapetodb(self,dataframe:pandas.DataFrame):#,thing_to_get):
-        messagesent = DiscordMessage(sender = dataframe['sender'],
-                        time = dataframe['time'],
-                        content = dataframe['content'],
-                        file = dataframe['file'])
-        addmsgtodb(messagesent)
         try:
             #entrypoint for data
             dataframe.columns = ['channel','time','sender','content','file']
             for row in range(0, len(dataframe.index)):
                 if dataframe.iloc[row][filterfield] == filterstring:
                     warning_message("[-] PANDAS - input : {} : discarded from rows".format(dataframe.iloc[row][filterstring]))
-                else :
-                    messagesent = DiscordMessage(sender = dataframe.iloc[row]['sender'],
-                                    time = dataframe.iloc[row]['time'],
-                                    content = dataframe.iloc[row]['content'],
-                                    file = dataframe.iloc[row]['file'],
-                                    )
-                addmsgtodb(messagesent)
+                else :                          #sender of message
+                    messagesent = DiscordMessage(channel = dataframe['channel'],
+                                                time = dataframe['time'],
+                                                sender = dataframe['sender'],
+                                                content = dataframe['content'],
+                                                # either a file path or base64 
+                                                file = dataframe['file'])
+                    #push to DB
+                    addmsgtodb(messagesent)
         except Exception:
             errormessage("[-] WikiScraper FAILEDFAILED")
 
@@ -509,6 +523,7 @@ greenprint("[+] Loaded Discord commands")
 class HTTPDownloadRequest():
     '''refactoring to be generic, was based on discord, DEFAULTS TO DISCORD AUTHSTRING'''
     def __init__(self,headers:str, httpauthstring:str,url:str):
+        self.responsedatacontainer = []
         # just a different way of setting a default
         # good for long strings as defaults
         try:
@@ -525,8 +540,9 @@ class HTTPDownloadRequest():
                               discord/0.0.309 Chrome/83.0.4103.122 \
                               Electron/9.3.5 Safari/537.36", 
                     'Authorization' : self.httpauthstring}
+            # perform the http request
             responsedata = self.sendRequest(url)
-            if responsedata != None:
+            if responsedata == None:
                 raise Exception
         except Exception:
             errormessage("[-] Error in HTTPDownloadRequest()")
@@ -563,9 +579,8 @@ Returns False if no error
         #urlparts = urlstr.split('/')
         #urlpath = '/{0}'.format('/'.join(urlparts[3:]))
         #connection = HTTPSConnection(urlparts[2], 443)
-        request = requests.get(urlpath, headers=self.headers)
-        connection.request('GET', urlpath, headers=self.headers)
-        response = connection.getresponse()
+        self.response = requests.get(urlpath, headers=self.headers)
+        response = 
         if TESTING == True:
             for header in response.getheaders():
                 if header[0] == 'Retry-After':
