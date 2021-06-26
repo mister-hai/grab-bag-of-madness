@@ -249,8 +249,8 @@ class DiscordMessage(DiscordMsgDB.Model):
     channel   = DiscordMsgDB.Column(DiscordMsgDB.String(256), primary_key   = True)
     time      = DiscordMsgDB.Column(DiscordMsgDB.String(64))
     sender    = DiscordMsgDB.Column(DiscordMsgDB.string(64))
-    message   = DiscordMsgDB.Column(DiscordMsgDB.Text)
-    #filelocation
+    content   = DiscordMsgDB.Column(DiscordMsgDB.Text)
+    #filelocation or base64
     file      = DiscordMsgDB.Column(DiscordMsgDB.Text)
 
     def __repr__(self):
@@ -369,7 +369,7 @@ directory_listing = scanfilesbyextension(imagedirectory,arguments.imagesaveforma
 @bot.event
 async def scrapemessages(message,channel,limit):
     #get the input
-    channelscraper = ChannelScraper(channel="",server= "")
+    channelscraper = ChannelScraper()
     #itterate over messages in channel until limit is reached
     for msg in message.channel.history(limit):
         #ain't us
@@ -378,7 +378,7 @@ async def scrapemessages(message,channel,limit):
             messageContent = message.content
             messageattachments = message.attachments
             ## shove into pandas DF
-            data = pandas.DataFrame(columns=['sender', 'time', 'content','file'])
+            data = pandas.DataFrame(columns=['channel', 'sender', 'time', 'content','file'])
             #if attachment exists in message
             if len(messageattachments) > 0:
                 #process attachments to grab images
@@ -406,7 +406,8 @@ async def scrapemessages(message,channel,limit):
                     else:
                         raise Exception
 
-            data = data.append({'sender'       : msg.author.name,
+            data = data.append({'channel'      : msg.channel,
+                                'sender'       : msg.author.name,
                                 'time'         : msg.created_at,
                                 'content'      : msg.content,
                                 'file'         : imagedata},
@@ -420,11 +421,11 @@ async def scrapemessages(message,channel,limit):
             #i they want to push it to a local sqlite3 database
             elif SAVETOCSV == False:
                 messagesent = DiscordMessage(channel = data['channel'],
-                                            time = data['time'],
-                                            sender = data['sender'],
-                                            content = data['content'],
+                                            time     = data['time'],
+                                            sender   = data['sender'],
+                                            content  = data['content'],
                                             # either a file path or base64 
-                                            file = data['file'])
+                                            file     = data['file'])
                 #push to DB
                 addmsgtodb(messagesent)
                 channelscraper.channelscrapetodb(data)
@@ -554,39 +555,16 @@ class HTTPDownloadRequest():
             if self.response == None:
                 raise Exception
             #filter the response for the required image data
-            imagedata = self.filterresponse(self.response)
+            self.imagedata = self.filterresponse(self.response)
         except Exception:
             errormessage("[-] Error in HTTPDownloadRequest()")
 
     def setHeaders(self, headers):
         self.headers = headers
 
-    def was_there_was_an_error(self, responsecode):
-        ''' Basic prechecking before more advanced filtering of output
-Returns False if no error
-        '''
-        # server side error]
-        set1 = [404,504,503,500]
-        set2 = [400,405,501]
-        set3 = [500]
-        if responsecode in set1 :
-            blueprint("[-] Server side error - No Image Available in REST response")
-            yellowboldprint("Error Code {}".format(responsecode))
-            return True # "[-] Server side error - No Image Available in REST response"
-        if responsecode in set2:
-            redprint("[-] User error in Image Request")
-            yellowboldprint("Error Code {}".format(responsecode))
-            return True # "[-] User error in Image Request"
-        if responsecode in set3:
-            #unknown error
-            blueprint("[-] Unknown Server Error - No Image Available in REST response")
-            yellowboldprint("Error Code {}".format(responsecode))
-            return True # "[-] Unknown Server Error - No Image Available in REST response"
-        # no error!
-        if responsecode == 200:
-            return False
 
     def sendRequest(self, url):
+        '''first this is called'''
         self.response = requests.get(url, headers=self.headers)
         if TESTING == True:
             for header in self.response.headers:
@@ -594,6 +572,7 @@ Returns False if no error
                     debugmessage(header)
 
     def filterresponse(self,response):
+        '''then this'''
         #filter out errors with our own stuff first
         if self.was_there_was_an_error(response.status) == False:
             # Return the response if the connection was successful.
@@ -611,44 +590,36 @@ Returns False if no error
                 warn('[+] Ignored unsafe redirect to {0}.'.format(redirecturl))
             # Otherwise throw a warning message to acknowledge a failed connection.
             else: 
-                warn('HTTP {0} from {1}.'.format(response.status, url))
-        
+                warn('HTTP {0} from {1}. Image Download Failed'.format(response.status_code, redirecturl))
+
+            # if we need to retry
             # Handle HTTP 429 Too Many Requests
-            if response.status == 429:
-                retry_after = loads(response.read()).get('retry_after', None)
-                if retry_after:   
-                    # Sleep for 1 extra second as buffer
-                    sleep(1 + retry_after)
-                    return self.sendRequest(url)
+            if self.response.status_code == 429:
+                retry_after_time = self.response.headers['retry_after']
+                if retry_after_time > 0:   
+                sleep(1 + retry_after_time)
+                self.retryrequest(url)        
             # Return nothing to signify a failed request.
             return None
 
+    def retryrequest(self,url):
+        '''and this is sent if we need to retry'''
+        self.sendRequest(url)
+
     def downloadFile(self, url, filename, buffer=0):
-        # Grab the folder path from the full file name.
-        filepath = path.split(filename)[0]
-        # Determine if the file path exists, if not then create it.
-        if not path.exists(filepath):
-            makedirs(filepath)     
-        # file already exists, skip everything
-        if path.isfile(filename):
-            return None
-        response = self.sendRequest(url)
-        if response is None:
-            return None      
         #file size in bytes.
-        filesize = int(response.getheader('Content-Length'))    
+        filesize = int(self.response.header['Content-Length'])    
         #bytes downloaded
         downloaded = 0
         numchunks = int(filesize / buffer)
         lastchunk = filesize % buffer
-
         with open(filename, 'a+b') as filestream:
-            if response.getheader('Accept-Ranges') != 'bytes' or buffer <= 0 or numchunks < 1:
-                print('\rDownloading {0}...'.format(' ' * 7), end='')
-                filestream.write(response.read())
+            if self.response.header['Accept-Ranges'] != 'bytes' or buffer <= 0 or numchunks < 1:
+                greenprint('[+] Downloading {0}...'.format(' ' * 7), end='')
+                filestream.write(self.response.content)
                 filestream.close()
                 return None
-
+                
             for i in range(numchunks):
                 i =i
                 request = HTTPDownloadRequest("","")
@@ -679,6 +650,31 @@ Returns False if no error
                 filestream.write(response.read())
                 filestream.close()
             del self.headers['Range']
+
+    def was_there_was_an_error(self, responsecode):
+        ''' Basic prechecking before more advanced filtering of output
+Returns False if no error
+        '''
+        # server side error]
+        set1 = [404,504,503,500]
+        set2 = [400,405,501]
+        set3 = [500]
+        if responsecode in set1 :
+            blueprint("[-] Server side error - No Image Available in REST response")
+            yellowboldprint("Error Code {}".format(responsecode))
+            return True # "[-] Server side error - No Image Available in REST response"
+        if responsecode in set2:
+            redprint("[-] User error in Image Request")
+            yellowboldprint("Error Code {}".format(responsecode))
+            return True # "[-] User error in Image Request"
+        if responsecode in set3:
+            #unknown error
+            blueprint("[-] Unknown Server Error - No Image Available in REST response")
+            yellowboldprint("Error Code {}".format(responsecode))
+            return True # "[-] Unknown Server Error - No Image Available in REST response"
+        # no error!
+        if responsecode == 200:
+            return False
 
 ###############################################################################
 #                MAIN CONTROL FLOW
