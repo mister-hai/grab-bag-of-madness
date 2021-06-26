@@ -34,6 +34,7 @@ Discord bot message archival
 ################################################################################
 print("[+] Starting Discord Scraping Utility")
 TESTING = True
+
 import base64
 import sys,os
 import pandas
@@ -44,25 +45,18 @@ import requests
 import traceback
 import threading
 import subprocess
-from json import loads
-from sys import stderr
 from time import sleep
+from sys import stderr
 from io import BytesIO
-from time import mktime
 from pathlib import Path
-from random import choice
 from datetime import date
 from os import _exit as exit
-from json import loads, dump
 from mimetypes import MimeTypes
-from requests import requote_uri
 from signal import SIGINT, signal
-from importlib import import_module
 from sys import stderr, version_info
 from os import makedirs, getcwd, path
-from http.client import HTTPSConnection
 from datetime import datetime, timedelta
-
+from urllib.parse import urlparse
 import discord
 import PIL
 from discord.ext import commands, tasks
@@ -362,6 +356,11 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game(name="Chembot - type .help"))
     #await lookup_bot.connect()
 
+def filtermessage(attachment):
+    if (attachment.url != None) and \
+       (attachment.filename.endswith(".jpg" or ".png" or ".gif")) and\
+       (attachment.url) and\
+       (attachment) :
 imagesaveformat = ".png"
 imagedirectory = os.getcwd() + "/images/"
 directory_listing = scanfilesbyextension(imagedirectory,arguments.imagesaveformat)
@@ -554,8 +553,7 @@ class HTTPDownloadRequest():
             #check to see if there is data
             if self.response == None:
                 raise Exception
-            #filter the response for the required image data
-            self.imagedata = self.filterresponse(self.response)
+
         except Exception:
             errormessage("[-] Error in HTTPDownloadRequest()")
 
@@ -570,9 +568,6 @@ class HTTPDownloadRequest():
             for header in self.response.headers:
                 if header[0] == 'Retry-After':
                     debugmessage(header)
-
-    def filterresponse(self,response):
-        '''then this'''
         #filter out errors with our own stuff first
         if self.was_there_was_an_error(response.status) == False:
             # Return the response if the connection was successful.
@@ -597,7 +592,7 @@ class HTTPDownloadRequest():
             if self.response.status_code == 429:
                 retry_after_time = self.response.headers['retry_after']
                 if retry_after_time > 0:   
-                sleep(1 + retry_after_time)
+                time.sleep(1 + retry_after_time)
                 self.retryrequest(url)        
             # Return nothing to signify a failed request.
             return None
@@ -615,39 +610,30 @@ class HTTPDownloadRequest():
         lastchunk = filesize % buffer
         with open(filename, 'a+b') as filestream:
             if self.response.header['Accept-Ranges'] != 'bytes' or buffer <= 0 or numchunks < 1:
-                greenprint('[+] Downloading {0}...'.format(' ' * 7), end='')
                 filestream.write(self.response.content)
                 filestream.close()
                 return None
-                
+
             for i in range(numchunks):
                 i =i
-                request = HTTPDownloadRequest("","")
                 headers = self.headers
                 chunk = downloaded + buffer - 1
-                headers.update({'Range': 'bytes={0}-{1}'.format(downloaded, chunk)})
+                headers['Range'] = 'bytes={0}-{1}'.format(downloaded, chunk)
                 percentage = 100 * downloaded / filesize
-                request.setHeaders(headers)
-                response = request.sendRequest(url)
-                if response is None:
+                if self.response is None:
                     filestream.close()
                     return None
-                print('\rDownloading {0:3.2f}%...'.format(percentage), end='')
-                filestream.write(response.read())
+                filestream.write(self.response.contents)
                 downloaded += buffer
             
             if lastchunk > 0:
-                request = HTTPDownloadRequest()
-                headers = self.headers
-                headers.update({'Range': 'bytes={0}-'.format(downloaded)})
+                self.headers['Range'] ='bytes={0}-'.format(downloaded)
                 percentage = 100.0
-                request.setHeaders(headers)
-                response = request.sendRequest(url)
-                if response is None:
+                self.setHeaders(headers)
+                if self.response is None:
                     filestream.close()
                     return None
-                print('\rDownloading {0:3.2f}%...'.format(percentage), end='')
-                filestream.write(response.read())
+                filestream.write(response.contents)
                 filestream.close()
             del self.headers['Range']
 
