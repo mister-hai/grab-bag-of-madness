@@ -35,6 +35,7 @@ Discord bot message archival
 ################################################################################
 print("[+] Starting Discord Scraping Utility")
 TESTING = True
+import base64
 import sys,os
 import pandas
 import logging
@@ -46,6 +47,7 @@ import subprocess
 from json import loads
 from sys import stderr
 from time import sleep
+from io import BytesIO
 from time import mktime
 from pathlib import Path
 from random import choice
@@ -140,7 +142,7 @@ bot = commands.Bot(command_prefix=(COMMAND_PREFIX))
 ###############################################################################
 client = discord.Client()
 guild = discord.Guild
-SAVETOCSV = arguments.
+SAVETOCSV = arguments.saveformat
 today = date.today()
 log_file            = 'LOGGING LOGGER LOG'
 logging.basicConfig(filename=log_file, format='%(asctime)s %(message)s', filemode='w')
@@ -153,36 +155,56 @@ script_osdir        = Path(__file__).parent.absolute()
 redprint          = lambda text: print(Fore.RED + ' ' +  text + ' ' + Style.RESET_ALL) if (COLORMEQUALIFIED == True) else print(text)
 blueprint         = lambda text: print(Fore.BLUE + ' ' +  text + ' ' + Style.RESET_ALL) if (COLORMEQUALIFIED == True) else print(text)
 greenprint        = lambda text: print(Fore.GREEN + ' ' +  text + ' ' + Style.RESET_ALL) if (COLORMEQUALIFIED == True) else print(text)
-yellow_bold_print = lambda text: print(Fore.YELLOW + Style.BRIGHT + ' {} '.format(text) + Style.RESET_ALL) if (COLORMEQUALIFIED == True) else print(text)
+yellowboldprint = lambda text: print(Fore.YELLOW + Style.BRIGHT + ' {} '.format(text) + Style.RESET_ALL) if (COLORMEQUALIFIED == True) else print(text)
 makeyellow        = lambda text: Fore.YELLOW + ' ' +  text + ' ' + Style.RESET_ALL if (COLORMEQUALIFIED == True) else text
 makered           = lambda text: Fore.RED + ' ' +  text + ' ' + Style.RESET_ALL if (COLORMEQUALIFIED == True) else None
 makegreen         = lambda text: Fore.GREEN + ' ' +  text + ' ' + Style.RESET_ALL if (COLORMEQUALIFIED == True) else None
 makeblue          = lambda text: Fore.BLUE + ' ' +  text + ' ' + Style.RESET_ALL if (COLORMEQUALIFIED == True) else None
-debug_message     = lambda message: logger.debug(blueprint(message)) 
+debugmessage     = lambda message: logger.debug(blueprint(message)) 
 info_message      = lambda message: logger.info(greenprint(message))   
-warning_message   = lambda message: logger.warning(yellow_bold_print(message)) 
+warning_message   = lambda message: logger.warning(yellowboldprint(message)) 
 error_message     = lambda message: logger.error(redprint(message)) 
-critical_message  = lambda message: logger.critical(yellow_bold_print(message))
+critical_message  = lambda message: logger.critical(yellowboldprint(message))
 scanfilesbyextension = lambda directory,extension: [f for f in os.listdir(directory) if f.endswith(extension)]
 
 greenprint("[+] Variables Set!")
 
+################################################################################
+##############                      SYSTEM                     #################
+################################################################################
 def errormessage(message):
     exc_type, exc_value, exc_tb = sys.exc_info()
     trace = traceback.TracebackException(exc_type, exc_value, exc_tb) 
     try:
-        redprint( message + ''.join(trace.format_exception_only()))
+        error( message + ''.join(trace.format_exception_only()))
         #traceback.format_list(trace.extract_tb(trace)[-1:])[-1]
         blueprint('LINE NUMBER >>>' + str(exc_tb.tb_lineno))
     except Exception:
-        yellow_bold_print("EXCEPTION IN ERROR HANDLER!!!")
+        error("EXCEPTION IN ERROR HANDLER!!!")
         redprint(message + ''.join(trace.format_exception_only()))
 
+def sigintEvent(sig, frame):
+    print('You pressed CTRL + C')
+    exit(0)
+signal(SIGINT, sigintEvent)
+
+def error(message):
+    # Append our message with a newline character.
+    redprint('[ERROR]: {0}\n'.format(message))
+    # Halt the script right here, do not continue running the script after this point.
+    exit(1)
+
+def warn(message):
+    """Throw a warning message without halting the script.
+    :param message: A string that will be printed out to STDERR.
+    """
+    # Append our message with a newline character.
+    yellowboldprint('[WARN] {0}\n'.format(message))
 ################################################################################
 ##############                      CONFIG                     #################
 ################################################################################
-TEST_DB            = 'sqlite://'
-DATABASE           = ""
+#TEST_DB            = 'sqlite://'
+DATABASE           = arguments.dbname
 LOCAL_CACHE_FILE   = 'sqlite:///' + DATABASE + ".db"
 DATABASE_FILENAME  = DATABASE + '.db'
 
@@ -342,7 +364,7 @@ imagedirectory = os.getcwd() + "/images/"
 directory_listing = scanfilesbyextension(imagedirectory,arguments.imagesaveformat)
 #function to call the scraper class when ordered
 @bot.event
-async def scrapemessages(message,limit):
+async def scrapemessages(message,channel,limit):
     #get the input
     asdf = ChannelScraper(channel="",server= "")
     #itterate over messages in channel until limit is reached
@@ -356,18 +378,33 @@ async def scrapemessages(message,limit):
             data = pandas.DataFrame(columns=['sender', 'time', 'content','file'])
             #if attachments
             if len(messageattachments) > 0:
+                #process attachments to grab images
                 for attachment in messageattachments:
+                    #its a link to 
                     if attachment.url != None:
-                        imaginesaver = HTTPDownloadRequest()
+                        # standard headers
+                        imagedata = HTTPDownloadRequest("",discord_bot_token,attachment.url)
+                            #save base64 directly in the database
+                        imagesaver = SaveDiscordImage(imagebytes = imagedata,
+                                                          base64orfile = arguments.saveformat,
+                                                          filename = attachment.name,
+                                                          imagesaveformat = arguments.imagesaveformat
+                                                          )
+                        #if arguments.saveformat == "base64":
+                        #elif arguments.saveformat == "file":
+                        # we now have either base64 image data, or binary image data
+                        imageblob = imagesaver.imagedata()
+                        
                     if attachment.filename.endswith(".jpg" or ".png" or ".gif"):
                         imagesaver = SaveDiscordImage(attachment,arguments.saveformat)
                         pass
                     else:
                         break
-            data = data.append({'sender': msg.author.name,
-                                'time'   : msg.created_at,
-                                'content' : msg.content},
-                                ignore_index=True)
+            data = data.append({'sender'       : msg.author.name,
+                                'time'         : msg.created_at,
+                                'content'      : msg.content,
+                                'file'         : imagedata},
+                                ignore_index = True)
             #perform data output
             if SAVETOCSV == True:
                 file_location = arguments.dbname + str(today) # Set the string to where you want the file to be saved to
@@ -385,31 +422,56 @@ async def scrapemessages(message,limit):
 ###############################################################################
 randomimagename = lambda string: str(os.urandom(12)) + ".png"
 class SaveDiscordImage():
-    def __init__(self,  imagedata:bytes, base64orfile = "file", filename = str(os.urandom(12)) + ".png"):
+    def __init__(self,  
+                 imagebytes:bytes,
+                 base64orfile = "file", 
+                 filename = "",
+                 imagesaveformat = ".png"):
         try:
+            self.imagesaveformat = imagesaveformat
+            self.imagein = imagebytes
+            self.imageout = bytes
+
+            if len(filename) > 0 :
+                self.filename = filename
+            else:
+                self.filename = randomimagename
             self.image_as_base64 = base64orfile
+            #they want to return a file blob
             if self.image_as_base64 == "file":
                 try:
                     self.filename    = filename
                     greenprint("[+] Saving image as {}".format(self.filename))
-                    self.image_storage = PIL.Image.open(imagedata)
-                    self.image_storage.save(self.filename, format = "png")                       
+                    self.image_storage = PIL.Image.open(self.imagein)
+                    self.image_storage.save(self.filename, format = self.imagesaveformat)
                     self.image_storage.close()
                 except Exception:
-                    errormessage("[-] Exception when opening or writing image file")
-        # we want a base64 string
-            elif self.image_as_base64 == True :
-                self.image_storage = self.encode_image_to_base64(self.image_storage)
+                    errormessage("[-] Exception when opening or writing Image File")
+            #they want to return a text blob
+            elif self.image_as_base64 == "base64" :
+                buff = BytesIO()
+                imagebytes.save(buff, format=self.imagesaveformat)
+                self.image_storage = base64.b64encode(buff.getvalue())
+                #self.image_storage = self.encode_image_to_base64(self.image_storage)
             else:
                 raise ValueError
         except:
             errormessage("[-] Error with Class Variable self.base64_save")
 
+    def imagedata(self):
+        '''returns either base64 encoded text or a filebyte blob'''
+        return self.image_storage
+
+
 class HTTPDownloadRequest(object):
-    '''refactoring to be generic, was based on discord'''
-    def __init__(self,headers:str, httpauthstring:str):
+    '''refactoring to be generic, was based on discord, DEFAULTS TO DISCORD AUTHSTRING'''
+    def __init__(self,headers:str, httpauthstring:str,url:str):
         # just a different way of setting a default
         # good for long strings as defaults
+        if len(httpauthstring) > 0:
+            self.headerauthstring = "'Authorization':" + httpauthstring
+        else:
+            self.httpauthstring = "'Authorization':" + discord_bot_token
         if len(headers) >0:
             self.setHeaders(headers)
         else:
@@ -418,11 +480,39 @@ class HTTPDownloadRequest(object):
                           AppleWebKit/537.36 (KHTML, like Gecko) \
                           discord/0.0.309 Chrome/83.0.4103.122 \
                           Electron/9.3.5 Safari/537.36", 
-                        #'Authorization': discord_bot_token
-                        }
+                'Authorization' : self.httpauthstring}
+        responsedata = self.sendrequest(url)
+        if responsedata != None:
+            pass
+
     def setHeaders(self, headers):
         self.headers = headers
-        
+
+    def was_there_was_an_error(self, responsecode):
+        '''
+Returns False if no error
+        '''
+        # server side error]
+        set1 = [404,504,503,500]
+        set2 = [400,405,501]
+        set3 = [500]
+        if responsecode in set1 :
+            blueprint("[-] Server side error - No Image Available in REST response")
+            yellowboldprint("Error Code {}".format(responsecode))
+            return True # "[-] Server side error - No Image Available in REST response"
+        if responsecode in set2:
+            redprint("[-] User error in Image Request")
+            yellowboldprint("Error Code {}".format(responsecode))
+            return True # "[-] User error in Image Request"
+        if responsecode in set3:
+            #unknown error
+            blueprint("[-] Unknown Server Error - No Image Available in REST response")
+            yellowboldprint("Error Code {}".format(responsecode))
+            return True # "[-] Unknown Server Error - No Image Available in REST response"
+        # no error!
+        if responsecode == 200:
+            return False
+
     def sendRequest(self, urlstr):
         urlparts = urlstr.split('/')
         urlpath = '/{0}'.format('/'.join(urlparts[3:]))
@@ -432,36 +522,38 @@ class HTTPDownloadRequest(object):
         if TESTING == True:
             for header in response.getheaders():
                 if header[0] == 'Retry-After':
-                    debugprint(header)
+                    debugmessage(header)
 
-        # Return the response if the connection was successful.
-        if 199 < response.status < 300:
-            return response
+        #filter out errors with our own stuff first
+        if self.was_there_was_an_error(response.status) == False:
+            # Return the response if the connection was successful.
+            if 199 < response.status < 300:
+                return response
         
-        #run this function again if we hit a redirect page.
-        elif 299 < response.status < 400:
-            # Grab the URL that we're redirecting to.
-            url = response.getheader('Location')
-            domain = url.split('/')[2].split(':')[0]
-            # If the domain is a part of Discord then re-run this function.
-            if domain in ['discordapp.com', 'discord.com']:
-                self.sendRequest(url)
+            #run this function again if we hit a redirect page.
+            elif 299 < response.status < 400:
+                # Grab the URL that we're redirecting to.
+                url = response.getheader('Location')
+                domain = url.split('/')[2].split(':')[0]
+                # If the domain is a part of Discord then re-run this function.
+                if domain in ['discordapp.com', 'discord.com']:
+                    self.sendRequest(url)
             
-            # Throw a warning message to acknowledge an untrusted redirect.
-            warn('Ignored unsafe redirect to {0}.'.format(url))
-        # Otherwise throw a warning message to acknowledge a failed connection.
-        else: 
-            warn('HTTP {0} from {1}.'.format(response.status, url))
+                # Throw a warning message to acknowledge an untrusted redirect.
+                warn('Ignored unsafe redirect to {0}.'.format(url))
+            # Otherwise throw a warning message to acknowledge a failed connection.
+            else: 
+                warn('HTTP {0} from {1}.'.format(response.status, url))
         
-        # Handle HTTP 429 Too Many Requests
-        if response.status == 429:
-            retry_after = loads(response.read()).get('retry_after', None)
-            if retry_after:   
-                # Sleep for 1 extra second as buffer
-                sleep(1 + retry_after)
-                return self.sendRequest(url)
-        # Return nothing to signify a failed request.
-        return None
+            # Handle HTTP 429 Too Many Requests
+            if response.status == 429:
+                retry_after = loads(response.read()).get('retry_after', None)
+                if retry_after:   
+                    # Sleep for 1 extra second as buffer
+                    sleep(1 + retry_after)
+                    return self.sendRequest(url)
+            # Return nothing to signify a failed request.
+            return None
 
     def downloadFile(self, url, filename, buffer=0):
         # Grab the folder path from the full file name.
@@ -491,7 +583,7 @@ class HTTPDownloadRequest(object):
 
             for i in range(numchunks):
                 i =i
-                request = HTTPDownloadRequest()
+                request = HTTPDownloadRequest("","")
                 headers = self.headers
                 chunk = downloaded + buffer - 1
                 headers.update({'Range': 'bytes={0}-{1}'.format(downloaded, chunk)})
@@ -519,24 +611,6 @@ class HTTPDownloadRequest(object):
                 filestream.write(response.read())
                 filestream.close()
             del self.headers['Range']
-
-def sigintEvent(sig, frame):
-    print('You pressed CTRL + C')
-    exit(0)
-signal(SIGINT, sigintEvent)
-
-def error(message):
-    # Append our message with a newline character.
-    redprint('[ERROR]: {0}\n'.format(message))
-    # Halt the script right here, do not continue running the script after this point.
-    exit(1)
-
-def warn(message):
-    """Throw a warning message without halting the script.
-    :param message: A string that will be printed out to STDERR.
-    """
-    # Append our message with a newline character.
-    yellowprint('[WARN] {0}\n'.format(message))
 
 ###############################################################################
 #                CHANNEL SCRAPING CLASS
