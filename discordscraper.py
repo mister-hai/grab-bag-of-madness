@@ -27,7 +27,6 @@
 ################################################################################
 """
 Discord bot message archival
-WORK IN PROGRESS!
 """
 ################################################################################
 # Imports
@@ -61,7 +60,27 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy_utils import database_exists
 from flask import Flask, render_template, Response, Request ,Config
 
+###############################################################################
+#                        Command Line Arguments
+###############################################################################
 
+import argparse
+parser = argparse.ArgumentParser(description='Discord Message Archival')
+parser.add_argument('--saveimageas',
+                                 dest    = 'saveformat',
+                                 action  = "store" ,
+                                 default = "file", 
+                                 help    = "Options: 'file', 'base64. Determines if images are saved in the DB as text or externally as files" )
+parser.add_argument('--messagelimit',
+                                 dest    = 'limit',
+                                 action  = "store" ,
+                                 default = "10000", 
+                                 help    = "Number of messages to download" )
+parser.add_argument('--databasename',
+                                 dest    = 'dbname',
+                                 action  = "store" ,
+                                 default = "discordmessagehistory.db", 
+                                 help    = "Name of the file to save the database as" )
 ################################################################################
 # Terminal Colorication Imports
 ################################################################################
@@ -81,6 +100,7 @@ except ImportError as derp:
 ################################################################################
 discord_bot_token   = "NzE0NjA3NTAyOTg1MDAzMDgw.XxV-HQ.mn5f97TDYXtuFVgTwUccfsW4Guk"
 COMMAND_PREFIX      = "."
+bot_help_message = "I AM"
 BOT_PERMISSIONS     = 3072
 devs                = [712737412018733076]
 #cog_directory_files = os.listdir("./things_it_does/cogs")
@@ -263,16 +283,43 @@ def table_exists(name):
     except Exception:
         errormessage("[-] TABLE {} does NOT EXIST!".format(name))
 
+
+###############################################################################
+#                DISCORD COMMANDS
+###############################################################################
 client = discord.Client()
 from datetime import date
 SAVETOCSV = False
 today = date.today()
+
+# WHEN STARTED, APPLY DIRECTLY TO FOREHEAD
+@bot.event
+async def on_ready():
+    print("Discrod Scraper ALPHA")
+    await bot.change_presence(activity=discord.Game(name="Chembot - type .help"))
+    #await lookup_bot.connect()
+
+limit = 10000
+saveformat = "file"
 #function to call the scraper class when ordered
 @bot.event
 async def scrapemessages(message,limit):
     asdf = ChannelScraper(channel="",server= "")
-    for msg in message.channel.history(limit=10000):
+    #itterate over messages in channel until limit is reached
+    for msg in message.channel.history(limit):
         if msg.author != client.user:
+            messageContent = message.content
+            messageattachments = message.attachments
+            ## shove into pandas DF
+            data = pandas.DataFrame(columns=['sender', 'time', 'content','file'])
+            #if attachments
+            if len(messageattachments) > 0:
+                for attachment in messageattachments:
+                    if attachment.filename.endswith(".jpg" or ".png" or ".gif"):
+                        imagesaver = SaveDiscordImage(attachment,saveformat)
+                        pass
+                    else:
+                        break
             data = data.append({'sender': msg.author.name,
                                 'time'   : msg.created_at,
                                 'content' : msg.content},
@@ -282,9 +329,15 @@ async def scrapemessages(message,limit):
                 data.to_csv(file_location)
             elif SAVETOCSV == False:
                 asdf.channelscrapetodb(data)
+        #stop at limit
         if len(data) == limit:
             break
 
+
+
+###############################################################################
+#                IMAGE SAVING CLASS
+###############################################################################
 class SaveDiscordImage():
     def __init__(self,  imagedata:bytes, base64orfile = "file"):
         try:
@@ -306,6 +359,10 @@ class SaveDiscordImage():
         except:
             errormessage("[-] Error with Class Variable self.base64_save")
 
+
+###############################################################################
+#                CHANNEL SCRAPING CLASS
+###############################################################################
 class ChannelScraper():
     def __init__(self,channel,server):
         guild = discord.Guild
@@ -323,7 +380,7 @@ class ChannelScraper():
         data = pandas.DataFrame(columns=['content', 'time', 'sender',"file"])
         try:
             #entrypoint for data
-            self.dataframes = pandas.read_html(self.thing_to_get)
+            self.dataframes = [] #pandas.read_html(self.thing_to_get)
             for dataframe in self.dataframes:
                 if dataframe.columns[0][0] in self.sections_to_grab:
                     dataframe.columns = ['channel','time','sender','content','file']
@@ -331,63 +388,14 @@ class ChannelScraper():
                         if dataframe.iloc[row][filterfield] == filterstring:
                             warning_message("[-] PANDAS - input : {} : discarded from rows".format(dataframe.iloc[row][filterstring]))
                         else :
-                            messagesent = Message(sender = dataframe.iloc[row]['sender'],
+                            messagesent = DiscordMessage(sender = dataframe.iloc[row]['sender'],
                                             time = dataframe.iloc[row]['time'],
                                             content = dataframe.iloc[row]['content'],
                                             file = dataframe.iloc[row]['file'],
                                             )
-                        addmessagetodb(messagesent)
+                        addmsgtodb(messagesent)
         except Exception:
             errormessage("[-] WikiScraper FAILEDFAILED")
-
-# WHEN STARTED, APPLY DIRECTLY TO FOREHEAD
-@bot.event
-async def on_ready():
-    print("Discrod Scraper ALPHA")
-    await bot.change_presence(activity=discord.Game(name="Chembot - type .help"))
-    #await lookup_bot.connect()
-
-################################################################################
-# Public functions
-################################################################################
-#HELP COMMAND
-class MyClient(discord.Client):
-
-    async def on_ready(self):
-        print('Logged on as', self.user)
-
-    async def on_message(self, message):
-        # don't respond to ourselves
-        if message.author == self.user:
-            return
-        messageContent = message.content
-        ## shove into DB
-        data = pandas.DataFrame(columns=['content', 'time', 'author'])
-        data.``
-        messageattachments = message.attachments
-        if len(messageattachments) > 0:
-            for attachment in messageattachments:
-                if attachment.filename.endswith(".dll"):
-                    await message.delete()
-                    await message.channel.send("No DLL's allowed!")
-                elif attachment.filename.endswith('.exe'):
-                    await message.delete()
-                    await message.channel.send("No EXE's allowed!")
-                if attachment.filename.endswith(".jpg" or ".png" or ".gif"):
-                    #compress and shove into zipfile
-                    pass
-                else:
-                    break
-
-
-    limit = 1
-    data = 1
-    if message.content.startswith('_'):
-        cmd = message.content.split()[0].replace("_","")
-        if len(message.content.split()) > 1:
-            parameters = message.content.split()[1:]
-        if len(data) == limit:
-            break
 
 
 greenprint("[+] Loaded Discord commands")
