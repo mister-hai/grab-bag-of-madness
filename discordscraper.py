@@ -41,6 +41,7 @@ import pandas
 import logging
 import pkgutil
 import inspect
+import requests
 import traceback
 import threading
 import subprocess
@@ -394,7 +395,7 @@ async def scrapemessages(message,channel,limit):
                         #elif arguments.saveformat == "file":
                         # we now have either base64 image data, or binary image data
                         imageblob = imagesaver.imagedata()
-                        
+
                     if attachment.filename.endswith(".jpg" or ".png" or ".gif"):
                         imagesaver = SaveDiscordImage(attachment,arguments.saveformat)
                         pass
@@ -463,27 +464,30 @@ class SaveDiscordImage():
         return self.image_storage
 
 
-class HTTPDownloadRequest(object):
+class HTTPDownloadRequest(requests.):
     '''refactoring to be generic, was based on discord, DEFAULTS TO DISCORD AUTHSTRING'''
     def __init__(self,headers:str, httpauthstring:str,url:str):
         # just a different way of setting a default
         # good for long strings as defaults
-        if len(httpauthstring) > 0:
-            self.headerauthstring = "'Authorization':" + httpauthstring
-        else:
-            self.httpauthstring = "'Authorization':" + discord_bot_token
-        if len(headers) >0:
-            self.setHeaders(headers)
-        else:
-            self.headers = {
-                'User-Agent':"Mozilla/5.0 (Windows NT 10.0; WOW64) \
-                          AppleWebKit/537.36 (KHTML, like Gecko) \
-                          discord/0.0.309 Chrome/83.0.4103.122 \
-                          Electron/9.3.5 Safari/537.36", 
-                'Authorization' : self.httpauthstring}
-        responsedata = self.sendrequest(url)
-        if responsedata != None:
-            pass
+        try:
+            if len(httpauthstring) > 0:
+                self.headerauthstring = "'Authorization':" + httpauthstring
+            else:
+                self.httpauthstring = "'Authorization':" + discord_bot_token
+            if len(headers) >0:
+                self.setHeaders(headers)
+            else:
+                self.headers = {
+                    'User-Agent':"Mozilla/5.0 (Windows NT 10.0; WOW64) \
+                              AppleWebKit/537.36 (KHTML, like Gecko) \
+                              discord/0.0.309 Chrome/83.0.4103.122 \
+                              Electron/9.3.5 Safari/537.36", 
+                    'Authorization' : self.httpauthstring}
+            responsedata = self.sendRequest(url)
+            if responsedata != None:
+                raise Exception
+        except Exception:
+            errormessage("[-] Error in HTTPDownloadRequest()")
 
     def setHeaders(self, headers):
         self.headers = headers
@@ -513,10 +517,11 @@ Returns False if no error
         if responsecode == 200:
             return False
 
-    def sendRequest(self, urlstr):
-        urlparts = urlstr.split('/')
-        urlpath = '/{0}'.format('/'.join(urlparts[3:]))
-        connection = HTTPSConnection(urlparts[2], 443)
+    def sendRequest(self, url):
+        #urlparts = urlstr.split('/')
+        #urlpath = '/{0}'.format('/'.join(urlparts[3:]))
+        #connection = HTTPSConnection(urlparts[2], 443)
+        request = requests.get(urlpath, headers=self.headers)
         connection.request('GET', urlpath, headers=self.headers)
         response = connection.getresponse()
         if TESTING == True:
