@@ -463,8 +463,50 @@ class SaveDiscordImage():
         '''returns either base64 encoded text or a filebyte blob'''
         return self.image_storage
 
+class APIRequest():
+    '''uses Requests to return specific routes from a base API url'''
+        def __init__(self, apibaseurl:str, thing:str):
+            self.request_url = requote_uri("".format(apibaseurl,self.thing))
+            blueprint("[+] Requesting: " + makered(self.request_url) + "\n")
+            self.request_return = requests.get(self.request_url)
 
-class HTTPDownloadRequest(requests.):
+
+###############################################################################
+#                CHANNEL SCRAPING CLASS
+###############################################################################
+class ChannelScraper():
+    def __init__(self):#,channel,server):
+        #self.channel = channel
+        #self.server = server
+        self.filterfield = ""
+        self.filterstring = ""
+
+    def channelscrapetodb(self,dataframe:pandas.DataFrame):#,thing_to_get):
+        messagesent = DiscordMessage(sender = dataframe['sender'],
+                        time = dataframe['time'],
+                        content = dataframe['content'],
+                        file = dataframe['file'])
+        addmsgtodb(messagesent)
+        try:
+            #entrypoint for data
+            dataframe.columns = ['channel','time','sender','content','file']
+            for row in range(0, len(dataframe.index)):
+                if dataframe.iloc[row][filterfield] == filterstring:
+                    warning_message("[-] PANDAS - input : {} : discarded from rows".format(dataframe.iloc[row][filterstring]))
+                else :
+                    messagesent = DiscordMessage(sender = dataframe.iloc[row]['sender'],
+                                    time = dataframe.iloc[row]['time'],
+                                    content = dataframe.iloc[row]['content'],
+                                    file = dataframe.iloc[row]['file'],
+                                    )
+                addmsgtodb(messagesent)
+        except Exception:
+            errormessage("[-] WikiScraper FAILEDFAILED")
+
+
+greenprint("[+] Loaded Discord commands")
+
+class HTTPDownloadRequest():
     '''refactoring to be generic, was based on discord, DEFAULTS TO DISCORD AUTHSTRING'''
     def __init__(self,headers:str, httpauthstring:str,url:str):
         # just a different way of setting a default
@@ -616,45 +658,6 @@ Returns False if no error
                 filestream.write(response.read())
                 filestream.close()
             del self.headers['Range']
-
-###############################################################################
-#                CHANNEL SCRAPING CLASS
-###############################################################################
-class ChannelScraper():
-    def __init__(self,channel,server):
-        self.channel = channel
-        self.server = server
-        self.filterfield = ""
-        self.filterstring = ""
-
-    def channelscrapetodb(self,dataframe:pandas.DataFrame):#,thing_to_get):
-        messagesent = DiscordMessage(sender = dataframe['sender'],
-                        time = dataframe['time'],
-                        content = dataframe['content'],
-                        file = dataframe['file'])
-        addmsgtodb(messagesent)
-        try:
-            #entrypoint for data
-            self.dataframes = [] #pandas.read_html(self.thing_to_get)
-            for dataframe in self.dataframes:
-                if dataframe.columns[0][0] in self.sections_to_grab:
-                    dataframe.columns = ['channel','time','sender','content','file']
-                    for row in range(0, len(dataframe.index)):
-                        if dataframe.iloc[row][filterfield] == filterstring:
-                            warning_message("[-] PANDAS - input : {} : discarded from rows".format(dataframe.iloc[row][filterstring]))
-                        else :
-                            messagesent = DiscordMessage(sender = dataframe.iloc[row]['sender'],
-                                            time = dataframe.iloc[row]['time'],
-                                            content = dataframe.iloc[row]['content'],
-                                            file = dataframe.iloc[row]['file'],
-                                            )
-                        addmsgtodb(messagesent)
-        except Exception:
-            errormessage("[-] WikiScraper FAILEDFAILED")
-
-
-greenprint("[+] Loaded Discord commands")
-
 
 ###############################################################################
 #                MAIN CONTROL FLOW
